@@ -1,0 +1,17 @@
+[project]
+name = "vibration-interaction-bake-off"
+version = "0.1.0"
+description = "Python implementation of the vibration based interaction project."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "dearpygui==2.0.0",
+    "numpy>=2.2.6",
+    "pyaudio>=0.2.14",
+    "scikit-learn>=1.7.1",
+    "scipy>=1.15.3",
+    "sounddevice>=0.5.2",
+]
+
+[tool.uv]
+package = true

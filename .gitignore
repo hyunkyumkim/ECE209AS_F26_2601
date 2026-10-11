@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# App preferences and trained models
+metadata/
+*.model
+recordings/
