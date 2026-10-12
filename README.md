@@ -20,6 +20,10 @@ It computes an FFT of the microphone signal, classifies each frame with a linear
 
 ## Setup
 
+For the pretrained **Typing / Knock / Neutral** browser microphone demo, see
+[sound-demo/README.md](sound-demo/README.md). It runs locally with its own uv
+environment and downloads YAMNet on first launch.
+
 Install [`uv`](https://docs.astral.sh/uv/getting-started/installation/) (`winget install --id=astral-sh.uv -e` on Windows), then from this folder:
 
 ```bash

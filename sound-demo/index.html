@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local sound detector</title>
+<style>
+  :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #10151d; color: #e8edf4; }
+  body { max-width: 760px; margin: 48px auto; padding: 0 24px; }
+  h1 { font-size: 30px; margin-bottom: 10px; }
+  p { color: #aebccc; line-height: 1.6; }
+  section { padding: 24px; background: #1b2532; border-radius: 16px; margin: 20px 0; }
+  button, select { padding: 12px 16px; border-radius: 8px; border: 1px solid #52647a; font: inherit; }
+  button { background: #9be8cd; color: #10221d; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  #state { font-size: 58px; font-weight: 700; text-transform: uppercase; margin: 12px 0; }
+  #state.active { color: #9be8cd; }
+  label { display: block; margin: 20px 0 8px; }
+  input[type=range] { width: 100%; accent-color: #9be8cd; }
+  meter { width: 100%; height: 20px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; }
+  #events { max-height: 140px; overflow-y: auto; padding-left: 20px; }
+  #top, #details { color: #aebccc; font-size: 14px; }
+</style>
+<h1>Local sound detector</h1>
+<p>Pretrained YAMNet · Audio stays on this computer and is not recorded.</p>
+<section>
+  <div class="row"><button id="start">Start microphone</button><button id="stop" disabled>Stop</button></div>
+  <label for="device">Microphone</label><select id="device"><option value="">System default</option></select>
+  <p id="status" role="status">Ready. Click Start and allow microphone access.</p>
+  <div id="state" aria-live="polite">Neutral</div>
+  <label for="level">Microphone level</label><meter id="level" min="0" max="1" value="0"></meter>
+  <p id="details">Waiting for audio</p>
+</section>
+<section>
+  <p>Higher thresholds reduce false triggers. These starting values are uncalibrated; test quiet audio, speech, typing and table knocks.</p>
+  <label for="typing">Typing threshold <output id="typingValue">0.35</output> · score <span id="typingScore">0.000</span></label>
+  <input id="typing" type="range" min="0.05" max="0.95" step="0.01" value="0.35">
+  <label for="knock">Knock threshold <output id="knockValue">0.35</output> · score <span id="knockScore">0.000</span></label>
+  <input id="knock" type="range" min="0.05" max="0.95" step="0.01" value="0.35">
+  <label for="hold">Return-to-neutral delay <output id="holdValue">600 ms</output></label>
+  <input id="hold" type="range" min="0" max="1500" step="50" value="600">
+  <p>Brief gaps keep the last interaction visible. After this delay without a detection, it returns to Neutral.</p>
+  <p>Typing: <span id="typingRawScore">0.000</span> · Computer keyboard: <span id="keyboardScore">0.000</span>. Either can trigger Typing.</p>
+  <p>Tap score: <span id="tapScore">0.000</span> (diagnostic only; does not trigger Knock).</p>
+  <div id="top">Other model predictions will appear here.</div>
+</section>
+<section><h2>Recent detections</h2><ul id="events"></ul></section>
+<script>
+  const element = id => document.getElementById(id);
+  let stream, context, source, processor, mute;
+  let samples = new Float32Array(0);
+  let running = false, busy = false, session = 0;
+  let samplesSincePrediction = 0, lastEventTime = 0, lastEventLabel = '';
+  let lastActiveLabel = 'Neutral', lastDetectionTime = -Infinity;
+
+  for (const name of ['typing', 'knock']) {
+    element(name).oninput = () => element(name + 'Value').textContent = Number(element(name).value).toFixed(2);
+  }
+  element('hold').oninput = () => element('holdValue').textContent = `${element('hold').value} ms`;
+
+  function updateDisplayedLabel(rawLabel, now = performance.now()) {
+    if (rawLabel !== 'Neutral') {
+      lastActiveLabel = rawLabel;
+      lastDetectionTime = now;
+    }
+    const holdMilliseconds = Number(element('hold').value);
+    const withinHold = now - lastDetectionTime < holdMilliseconds;
+    const displayLabel = rawLabel !== 'Neutral' || withinHold ? lastActiveLabel : 'Neutral';
+    element('state').textContent = displayLabel;
+    element('state').classList.toggle('active', displayLabel !== 'Neutral');
+    return displayLabel;
+  }
+
+  async function listMicrophones() {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const selected = element('device').value;
+    element('device').replaceChildren(new Option('System default', ''));
+    for (const device of devices.filter(device => device.kind === 'audioinput')) {
+      element('device').add(new Option(device.label || 'Microphone', device.deviceId));
+    }
+    element('device').value = selected;
+  }
+
+  function showPrediction(result) {
+    const typingScore = Math.max(result.scores.Typing, result.scores['Computer keyboard']);
+    const knockScore = result.scores.Knock;
+    const typingDetected = typingScore >= Number(element('typing').value);
+    const knockDetected = knockScore >= Number(element('knock').value);
+    const hasDetection = typingDetected || knockDetected;
+    let label = 'Neutral';
+    if (typingDetected && knockDetected) {
+      label = typingScore >= knockScore ? 'Typing' : 'Knock';
+    } else if (typingDetected) {
+      label = 'Typing';
+    } else if (knockDetected) {
+      label = 'Knock';
+    }
+    updateDisplayedLabel(label);
+    element('typingScore').textContent = typingScore.toFixed(3);
+    element('knockScore').textContent = knockScore.toFixed(3);
+    element('tapScore').textContent = result.scores.Tap.toFixed(3);
+    element('typingRawScore').textContent = result.scores.Typing.toFixed(3);
+    element('keyboardScore').textContent = result.scores['Computer keyboard'].toFixed(3);
+    element('details').textContent = `Inference ${result.inference_ms} ms · Input ${context.sampleRate} Hz · 1-second windows`;
+    element('top').textContent = result.top.map(item => `${item.label}: ${item.score.toFixed(2)}`).join(' · ');
+
+    const now = Date.now();
+    if (hasDetection && (label !== lastEventLabel || now - lastEventTime > 1000)) {
+      const item = document.createElement('li');
+      item.textContent = `${new Date().toLocaleTimeString()} — ${label}`;
+      element('events').prepend(item);
+      while (element('events').children.length > 20) element('events').lastChild.remove();
+      lastEventTime = now;
+      lastEventLabel = label;
+    }
+  }
+
+  async function predict(audio, sampleRate, activeSession) {
+    busy = true;
+    try {
+      const response = await fetch(`/predict?rate=${sampleRate}`, {
+        method: 'POST', body: audio.buffer,
+        headers: {'Content-Type': 'application/octet-stream'},
+        signal: AbortSignal.timeout(10000),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error);
+      if (running && session === activeSession) showPrediction(result);
+    } catch (error) {
+      if (session === activeSession) {
+        await stopMicrophone();
+        element('status').textContent = `Detection stopped: ${error.message}`;
+      }
+    } finally {
+      if (session === activeSession) busy = false;
+    }
+  }
+
+  function captureAudio(event) {
+    if (!running) return;
+    const incoming = event.inputBuffer.getChannelData(0);
+    const rms = Math.sqrt(incoming.reduce((sum, sample) => sum + sample * sample, 0) / incoming.length);
+    element('level').value = Math.min(1, rms * 10);
+    const combined = new Float32Array(samples.length + incoming.length);
+    combined.set(samples);
+    combined.set(incoming, samples.length);
+    samples = combined.slice(-context.sampleRate);
+    samplesSincePrediction += incoming.length;
+    if (samples.length >= context.sampleRate && samplesSincePrediction >= context.sampleRate * 0.25 && !busy) {
+      samplesSincePrediction = 0;
+      predict(samples.slice(), context.sampleRate, session);
+    }
+  }
+
+  async function startMicrophone() {
+    element('start').disabled = true;
+    element('status').textContent = 'Requesting microphone access…';
+    try {
+      const deviceId = element('device').value;
+      stream = await navigator.mediaDevices.getUserMedia({audio: {
+        deviceId: deviceId ? {exact: deviceId} : undefined,
+        channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false,
+      }});
+      context = new AudioContext();
+      await context.resume();
+      source = context.createMediaStreamSource(stream);
+      processor = context.createScriptProcessor(4096, 1, 1);
+      mute = context.createGain();
+      mute.gain.value = 0;
+      source.connect(processor);
+      processor.connect(mute);
+      mute.connect(context.destination);
+      samples = new Float32Array(0);
+      samplesSincePrediction = 0;
+      busy = false;
+      session++;
+      running = true;
+      processor.onaudioprocess = captureAudio;
+      element('stop').disabled = false;
+      element('device').disabled = true;
+      element('status').textContent = 'Listening. Try typing for 1–2 seconds, then a table knock. Pause between tests.';
+      await listMicrophones();
+    } catch (error) {
+      await stopMicrophone();
+      element('status').textContent = `Microphone unavailable: ${error.message}. Check browser and macOS microphone permissions.`;
+    }
+  }
+
+  async function stopMicrophone() {
+    running = false;
+    session++;
+    lastActiveLabel = 'Neutral';
+    lastDetectionTime = -Infinity;
+    if (processor) { processor.onaudioprocess = null; processor.disconnect(); }
+    if (source) source.disconnect();
+    if (mute) mute.disconnect();
+    if (stream) stream.getTracks().forEach(track => track.stop());
+    if (context && context.state !== 'closed') await context.close();
+    stream = context = source = processor = mute = null;
+    samples = new Float32Array(0);
+    element('start').disabled = false;
+    element('stop').disabled = true;
+    element('device').disabled = false;
+    element('state').textContent = 'Neutral';
+    element('state').classList.remove('active');
+    element('level').value = 0;
+    element('status').textContent = 'Stopped. Microphone released.';
+  }
+
+  element('start').onclick = startMicrophone;
+  element('stop').onclick = stopMicrophone;
+  window.addEventListener('pagehide', () => {
+    if (stream) stream.getTracks().forEach(track => track.stop());
+  });
+</script>
+</html>
