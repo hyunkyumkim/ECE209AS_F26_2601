@@ -1,8 +1,8 @@
 # Local typing and knock detector
 
 A pretrained YAMNet baseline with exactly three displayed states: **Typing**, **Knock**,
-and **Neutral**. No training data is required to run it. This is a separate uv project
-from the course's desk-vibration app.
+and **Neutral**. No training data is required to run it. Dependencies are managed
+with uv inside this directory.
 
 ## Run
 
