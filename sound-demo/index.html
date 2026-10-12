@@ -32,11 +32,15 @@
   <p id="details">Waiting for audio</p>
 </section>
 <section>
-  <p>Higher thresholds reduce false triggers. These starting values are uncalibrated; test quiet audio, speech, whistles and table knocks.</p>
-  <label for="whistle">Whistle threshold <output id="whistleValue">0.35</output> · score <span id="whistleScore">0.000</span></label>
-  <input id="whistle" type="range" min="0.05" max="0.95" step="0.01" value="0.35">
+  <p>Higher thresholds reduce false triggers. These starting values are uncalibrated; test quiet audio, speech, typing and table knocks.</p>
+  <label for="typing">Typing threshold <output id="typingValue">0.35</output> · score <span id="typingScore">0.000</span></label>
+  <input id="typing" type="range" min="0.05" max="0.95" step="0.01" value="0.35">
   <label for="knock">Knock threshold <output id="knockValue">0.35</output> · score <span id="knockScore">0.000</span></label>
   <input id="knock" type="range" min="0.05" max="0.95" step="0.01" value="0.35">
+  <label for="hold">Return-to-neutral delay <output id="holdValue">600 ms</output></label>
+  <input id="hold" type="range" min="0" max="1500" step="50" value="600">
+  <p>Brief gaps keep the last interaction visible. After this delay without a detection, it returns to Neutral.</p>
+  <p>Typing: <span id="typingRawScore">0.000</span> · Computer keyboard: <span id="keyboardScore">0.000</span>. Either can trigger Typing.</p>
   <p>Tap score: <span id="tapScore">0.000</span> (diagnostic only; does not trigger Knock).</p>
   <div id="top">Other model predictions will appear here.</div>
 </section>
@@ -47,9 +51,24 @@
   let samples = new Float32Array(0);
   let running = false, busy = false, session = 0;
   let samplesSincePrediction = 0, lastEventTime = 0, lastEventLabel = '';
+  let lastActiveLabel = 'Neutral', lastDetectionTime = -Infinity;
 
-  for (const name of ['whistle', 'knock']) {
+  for (const name of ['typing', 'knock']) {
     element(name).oninput = () => element(name + 'Value').textContent = Number(element(name).value).toFixed(2);
+  }
+  element('hold').oninput = () => element('holdValue').textContent = `${element('hold').value} ms`;
+
+  function updateDisplayedLabel(rawLabel, now = performance.now()) {
+    if (rawLabel !== 'Neutral') {
+      lastActiveLabel = rawLabel;
+      lastDetectionTime = now;
+    }
+    const holdMilliseconds = Number(element('hold').value);
+    const withinHold = now - lastDetectionTime < holdMilliseconds;
+    const displayLabel = rawLabel !== 'Neutral' || withinHold ? lastActiveLabel : 'Neutral';
+    element('state').textContent = displayLabel;
+    element('state').classList.toggle('active', displayLabel !== 'Neutral');
+    return displayLabel;
   }
 
   async function listMicrophones() {
@@ -63,24 +82,25 @@
   }
 
   function showPrediction(result) {
-    const whistleScore = result.scores.Whistling;
+    const typingScore = Math.max(result.scores.Typing, result.scores['Computer keyboard']);
     const knockScore = result.scores.Knock;
-    const whistleDetected = whistleScore >= Number(element('whistle').value);
+    const typingDetected = typingScore >= Number(element('typing').value);
     const knockDetected = knockScore >= Number(element('knock').value);
-    const hasDetection = whistleDetected || knockDetected;
+    const hasDetection = typingDetected || knockDetected;
     let label = 'Neutral';
-    if (whistleDetected && knockDetected) {
-      label = whistleScore >= knockScore ? 'Whistle' : 'Knock';
-    } else if (whistleDetected) {
-      label = 'Whistle';
+    if (typingDetected && knockDetected) {
+      label = typingScore >= knockScore ? 'Typing' : 'Knock';
+    } else if (typingDetected) {
+      label = 'Typing';
     } else if (knockDetected) {
       label = 'Knock';
     }
-    element('state').textContent = label;
-    element('state').classList.toggle('active', hasDetection);
-    element('whistleScore').textContent = whistleScore.toFixed(3);
+    updateDisplayedLabel(label);
+    element('typingScore').textContent = typingScore.toFixed(3);
     element('knockScore').textContent = knockScore.toFixed(3);
     element('tapScore').textContent = result.scores.Tap.toFixed(3);
+    element('typingRawScore').textContent = result.scores.Typing.toFixed(3);
+    element('keyboardScore').textContent = result.scores['Computer keyboard'].toFixed(3);
     element('details').textContent = `Inference ${result.inference_ms} ms · Input ${context.sampleRate} Hz · 1-second windows`;
     element('top').textContent = result.top.map(item => `${item.label}: ${item.score.toFixed(2)}`).join(' · ');
 
@@ -158,7 +178,7 @@
       processor.onaudioprocess = captureAudio;
       element('stop').disabled = false;
       element('device').disabled = true;
-      element('status').textContent = 'Listening. Try a 1–2 second whistle, then a table knock. Pause between tests.';
+      element('status').textContent = 'Listening. Try typing for 1–2 seconds, then a table knock. Pause between tests.';
       await listMicrophones();
     } catch (error) {
       await stopMicrophone();
@@ -169,6 +189,8 @@
   async function stopMicrophone() {
     running = false;
     session++;
+    lastActiveLabel = 'Neutral';
+    lastDetectionTime = -Infinity;
     if (processor) { processor.onaudioprocess = null; processor.disconnect(); }
     if (source) source.disconnect();
     if (mute) mute.disconnect();

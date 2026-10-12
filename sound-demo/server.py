@@ -17,7 +17,7 @@ from scipy.signal import resample_poly
 
 ROOT = Path(__file__).resolve().parent
 MODEL_HANDLE = "https://tfhub.dev/google/yamnet/1"
-TARGETS = ("Whistling", "Knock", "Tap")
+TARGETS = ("Typing", "Computer keyboard", "Knock", "Tap")
 
 
 class Detector:

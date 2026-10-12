@@ -1,6 +1,6 @@
-# Local whistle and knock detector
+# Local typing and knock detector
 
-A pretrained YAMNet baseline with exactly three displayed states: **Whistle**, **Knock**,
+A pretrained YAMNet baseline with exactly three displayed states: **Typing**, **Knock**,
 and **Neutral**. No training data is required to run it. This is a separate uv project
 from the course's desk-vibration app.
 
@@ -49,15 +49,18 @@ appropriate if an experiment needs an immutable model artifact.
 
 ## Testing and thresholds
 
-1. Remain quiet, speak, and type: expect Neutral.
-2. Whistle for 1–2 seconds, then pause for two seconds: expect Whistle, then Neutral.
+1. Remain quiet or speak: expect Neutral.
+2. Type for 1–2 seconds, then pause for two seconds: expect Typing, then Neutral.
 3. Knock on the table, then pause: expect Knock, then Neutral.
 4. Repeat at different distances and test confusing background sounds.
 
 The initial threshold for each target is **0.35**, an uncalibrated starting value,
 not an accuracy guarantee. Raise it to reduce false triggers; lower it if events
 are missed. If both targets pass their thresholds, the higher score wins.
-Tap is shown for diagnosis only and does not trigger Knock.
+The higher of the Typing and Computer keyboard scores triggers Typing.
+Tap is shown for diagnosis only; Knock uses the Knock score. The return-to-neutral
+delay defaults to 600 ms and can be adjusted from 0 to 1500 ms to bridge brief gaps
+between detections.
 
 The model processes overlapping one-second windows about four times per second,
 subject to inference speed. Brief detections can remain visible until the event
@@ -66,9 +69,8 @@ accurate event counter. YAMNet's general Knock class does not guarantee performa
 on a particular table. Measure false triggers per hour and missed events on the
 intended microphone before relying on this baseline.
 
-Initial checks on the development machine recognized a public whistle sample and
-an ESC-50 door-knock sample, while silence and a keyboard-typing sample stayed below
-the target thresholds. These smoke checks do not establish real-world accuracy.
+Initial checks recognized keyboard-typing and door-knock fixtures while silence
+stayed below both target thresholds. These checks do not establish real-world accuracy.
 
 ## Privacy and configuration
 
